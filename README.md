@@ -1,2 +1,2 @@
 # cs512project
-CS 512 project
+CS 512 project implementation
