@@ -1,12 +1,8 @@
 import threading
 from nodes import GrandMaster, Switch, Slave
 
-def build_topology():
-    return
-
 if __name__ == '__main__':
-    build_topology()
-
+    # Build topology.
     listen_port_map = {"GM": 20000, "A": 20001, "B": 20002, "C": 20003 , "G": 20004}
 
     gm = GrandMaster("GM", ["A"], listen_port_map["GM"], 6)
@@ -50,5 +46,3 @@ if __name__ == '__main__':
     # Wait for all threads to complete
     for thread in threads:
         thread.join()
-
-    # Do logging and show stuff.

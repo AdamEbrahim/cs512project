@@ -20,13 +20,13 @@ class Switch:
 
         self.forwarding_map = {}
 
-        # Priority queue of pending forwards:
-        # entries are (due_time, seq, out_sock, msg, t_ingress,
-        #              needs_correction, record_sync_residence, apply_sync_correction)
-        self._pending_forwards = []
-        self._forward_seq = 0
-        self._sync_correction_buffer = {}
-        self._next_send_time = {}
+        # Priority queue of pending forwards.
+        # Entries are (due_time, seq, out_sock, msg, t_ingress,
+        # needs_correction, record_sync_residence, apply_sync_correction)
+        self.pending_forwards = []
+        self.forward_seq = 0
+        self.sync_correction_buffer = {}
+        self.next_send_time = {}
 
         self.upstream_node = upstream_node
         self.downstream_nodes = downstream_nodes
@@ -84,9 +84,9 @@ class Switch:
         while True:
             # Determine timeout based on earliest pending forward (if any).
             timeout = None
-            if self._pending_forwards:
+            if self.pending_forwards:
                 now = time.time()
-                next_due = self._pending_forwards[0][0]
+                next_due = self.pending_forwards[0][0]
                 timeout = max(0, next_due - now)
 
             readable, writeable, exceptional = select.select(all_socks, [], [], timeout)
@@ -109,22 +109,10 @@ class Switch:
                         # sync and follow_up are broadcast downstream.
                         if msg_type == "sync":
                             for ds in downstream_socks:
-                                self.forward(
-                                    ds,
-                                    msg,
-                                    t_ingress,
-                                    needs_correction=False,
-                                    record_sync_residence=True,
-                                )
+                                self.forward(ds, msg, t_ingress, needs_correction=False, record_sync_residence=True)
                         elif msg_type == "follow_up":
                             for ds in downstream_socks:
-                                self.forward(
-                                    ds,
-                                    msg,
-                                    t_ingress,
-                                    needs_correction=False,
-                                    apply_sync_correction=True,
-                                )
+                                self.forward(ds, msg, t_ingress, needs_correction=False, apply_sync_correction=True)
                         # delay_resp should go only to the correct slave subtree.
                         elif msg_type == "delay_resp" and len(parts) >= 2:
                             slave_name = parts[1]
@@ -141,7 +129,7 @@ class Switch:
 
             # Then, send any messages whose scheduled egress time has arrived.
             now = time.time()
-            while self._pending_forwards and self._pending_forwards[0][0] <= now:
+            while self.pending_forwards and self.pending_forwards[0][0] <= now:
                 (
                     _,
                     _,
@@ -151,45 +139,28 @@ class Switch:
                     needs_correction,
                     record_sync_residence,
                     apply_sync_correction,
-                ) = heapq.heappop(self._pending_forwards)
-                self._send_with_metadata(
-                    out_sock,
-                    msg,
-                    t_ingress,
-                    needs_correction,
-                    record_sync_residence,
-                    apply_sync_correction,
-                )
+                ) = heapq.heappop(self.pending_forwards)
+                self.send_with_metadata(out_sock, msg, t_ingress, needs_correction, record_sync_residence, apply_sync_correction)
 
 
-    def forward(
-        self,
-        out_sock,
-        msg,
-        t_ingress,
-        needs_correction: bool,
-        record_sync_residence: bool = False,
-        apply_sync_correction: bool = False,
-    ):
-        """
-        Schedule a message to be forwarded after a random residence time.
-        Residence time is accounted for when the message is actually sent.
-        """
+    # This function is used to Schedule a message to be forwarded after a random residence time.
+    # Residence time is accounted for when the message is actually sent.
+    def forward(self, out_sock, msg, t_ingress, needs_correction: bool, record_sync_residence: bool = False, apply_sync_correction: bool = False):
         # Sample an artificial residence time (small to avoid starving downstream nodes).
         residence_delay = random.uniform(0.5, 1.0)
         ready_time = t_ingress + residence_delay
 
-        last_time = self._next_send_time.get(out_sock, 0.0)
+        last_time = self.next_send_time.get(out_sock, 0.0)
         due_time = max(ready_time, last_time)
         # ensure strict ordering by nudging slightly forward
         due_time += 1e-6
-        self._next_send_time[out_sock] = due_time
+        self.next_send_time[out_sock] = due_time
 
         heapq.heappush(
-            self._pending_forwards,
+            self.pending_forwards,
             (
                 due_time,
-                self._forward_seq,
+                self.forward_seq,
                 out_sock,
                 msg,
                 t_ingress,
@@ -198,21 +169,11 @@ class Switch:
                 apply_sync_correction,
             ),
         )
-        self._forward_seq += 1
+        self.forward_seq += 1
 
 
-    def _send_with_metadata(
-        self,
-        out_sock,
-        msg,
-        t_ingress,
-        needs_correction: bool,
-        record_sync_residence: bool,
-        apply_sync_correction: bool,
-    ):
-        """
-        Actually send the message out, updating the correction field if requested.
-        """
+    # This function actually sends the message out and updates the correction field if necessary.
+    def send_with_metadata(self, out_sock, msg, t_ingress, needs_correction: bool, record_sync_residence: bool, apply_sync_correction: bool):
         parts = msg.split(" ")
         msg_type = parts[0] if parts else ""
 
@@ -220,8 +181,8 @@ class Switch:
         residence = t_egress - t_ingress
 
         if record_sync_residence:
-            current = self._sync_correction_buffer.get(out_sock, 0.0)
-            self._sync_correction_buffer[out_sock] = current + residence
+            current = self.sync_correction_buffer.get(out_sock, 0.0)
+            self.sync_correction_buffer[out_sock] = current + residence
 
         if needs_correction and len(parts) >= 3:
             try:
@@ -233,7 +194,7 @@ class Switch:
             parts[-1] = str(new_corr)
             fwd_msg = " ".join(parts) + "\n"
         elif apply_sync_correction and len(parts) >= 3:
-            extra_corr = self._sync_correction_buffer.pop(out_sock, 0.0)
+            extra_corr = self.sync_correction_buffer.pop(out_sock, 0.0)
             try:
                 base_corr = float(parts[-1])
             except ValueError:

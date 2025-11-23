@@ -13,7 +13,9 @@ class Slave:
         self.upstream_sock_map = {}
 
         self.upstream_node = upstream_node
-        self._recv_buffers = {}
+        self.recv_buffers = {}
+
+        self.running_drift_errors = []
 
     # Entry point for threads.
     def start(self, listen_port_map: dict):
@@ -35,9 +37,10 @@ class Slave:
 
     def run_ptp(self):
         upstream_sock = list(self.upstream_sock_map.keys())[0]
+        iteration = 1
         while True:
-            # Generate a random clock drift between 0 and 1 second for this iteration
-            drift = random.uniform(0.0, 1.0)
+            # Generate a random clock drift between -1 and 1 second for this iteration
+            drift = random.uniform(-1.0, 1.0)
 
             # Wait for sync message.
             t2, msg = self.recv_message(upstream_sock)
@@ -65,12 +68,20 @@ class Slave:
                 print(f"Error: Node {self.name} didn't receive delay_resp when expected.")
                 continue
 
-            print(f"Node {self.name}: computed sync_corr - {sync_correction}   computed delay_corr - {delay_correction}")
+            # print(f"Node {self.name}: computed sync_corr - {sync_correction}   computed delay_corr - {delay_correction}")
 
             delay = ((t2 - t1 - sync_correction) + (t4 - t3 - delay_correction)) / 2
             offset = ((t2 - t1 - sync_correction) - (t4 - t3 - delay_correction)) / 2
 
-            print(f"Node {self.name}: true drift - {drift}   computed delay - {delay}   computed offset - {offset}")
+            print(f"Node {self.name}: true drift - {drift}   computed drift - {offset}   computed delay - {delay}")
+
+            self.running_drift_errors.append(abs(drift - offset))
+
+            avg = sum(self.running_drift_errors) / len(self.running_drift_errors)
+
+            print(f"Node {self.name} average error in drift calculation by iteration {iteration}: {avg:f}")
+
+            iteration = iteration + 1
 
     
     def handle_follow_up(self, upstream_sock):
@@ -120,22 +131,17 @@ class Slave:
             sys.exit(1)
 
     def recv_message(self, sock):
-        """
-        Read exactly one newline-delimited message from the socket, returning
-        (timestamp, message_without_newline). Any additional data beyond the
-        first newline is buffered for later calls.
-        """
-        buffer = self._recv_buffers.get(sock, "")
+        buffer = self.recv_buffers.get(sock, "")
 
         while "\n" not in buffer:
             chunk = sock.recv(4096)
             if not chunk:
-                print(f"Error during receive: connection closed for node {self.name}")
+                print(f"Error during receive_message: connection closed for node {self.name}")
                 sock.close()
                 sys.exit(1)
             buffer += chunk.decode("utf8")
 
         line, _, remainder = buffer.partition("\n")
-        self._recv_buffers[sock] = remainder
+        self.recv_buffers[sock] = remainder
         return (time.time(), line.strip())
 
